@@ -3,6 +3,8 @@ import time
 import os
 from config import TradingConfig
 from api_client import fetch_top_market_data
+# Importáljuk az adatbázis funkcióit
+import database
 
 def process_market_data(raw_tickers):
     """Feldolgozza és megszűri a Bybitről kapott nyers adatokat"""
@@ -32,7 +34,7 @@ def render_dashboard(loop_count, current_market, my_positions, trade_log):
     print(f" Idő: {time.strftime('%Y-%m-%d %H:%M:%S')} | Kilépés: Ctrl+C")
     print("=" * 70)
     
-    print(f"\n[1] AKTÍV POZÍCIÓK (Stop-Loss védelmi vonal: {TradingConfig.STOP_LOSS_PCT}%)")
+    print(f"\n[1] AKTÍV POZÍCIÓK (Adatbázisból védve | SL: {TradingConfig.STOP_LOSS_PCT}%)")
     print("-" * 70)
     print(f"{'COIN':<12} | {'VÉTELI ÁR':<12} | {'AKTUÁLIS ÁR':<12} | {'PROFIT / LOSS'}")
     print("-" * 70)
@@ -41,7 +43,6 @@ def render_dashboard(loop_count, current_market, my_positions, trade_log):
         print("   Nincsenek aktív pozíciók. Megfelelő belépő keresése...")
     else:
         for symbol, buy_price in my_positions.items():
-            # Megkeressük az aktuális árat a piacból
             curr_price = market_dict[symbol]["price"] if symbol in market_dict else buy_price
             pl = ((curr_price - buy_price) / buy_price) * 100
             print(f"{symbol:<12} | {buy_price:<12.4f} | {curr_price:<12.4f} | {pl:+.2f}%")
@@ -51,23 +52,39 @@ def render_dashboard(loop_count, current_market, my_positions, trade_log):
     for coin in current_market[:3]:
         print(f"-> {coin['symbol']:<10} | Ár: {coin['price']:<10.4f} | Változás: {coin['change_24h']:+.2f}%")
         
-    print("\n[3] UTOLSÓ TRANZAKCIÓK (Trade Log)")
+    print("\n[3] UTOLSÓ TRANZAKCIÓK (Élő Adatbázis Log)")
     print("-" * 70)
     if not trade_log:
-        print("   Még nem történt tranzakció.")
+        print("   Még nem történt tranzakció ebben a menetben.")
     else:
-        for log in trade_log[-4:]: # Csak az utolsó 4 eseményt mutatjuk
+        for log in trade_log[-4:]:
             print(log)
     print("=" * 70)
 
+def load_positions_from_db():
+    """Betölti a korábban elmentett nyitott pozíciókat az adatbázisból"""
+    positions = {}
+    conn = database.get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT symbol, buy_price FROM active_positions")
+    rows = cursor.fetchall()
+    for row in rows:
+        positions[row["symbol"]] = row["buy_price"]
+    conn.close()
+    return positions
+
 def start_bot():
-    my_positions = {}
+    # 1. LÉPÉS: Inicializáljuk az adatbázis tábláit, ha még nem léteznek
+    database.init_db()
+    
+    # 2. LÉPÉS: Betöltjük az elmentett pozíciókat (Így nem felejt a bot!)
+    my_positions = load_positions_from_db()
+    
     trade_log = []
     loop_count = 0
 
     while True:
         raw_data = fetch_top_market_data()
-        
         if not raw_data:
             time.sleep(TradingConfig.REFRESH_RATE_SECONDS)
             continue
@@ -83,19 +100,27 @@ def start_bot():
                 current_price = market_dict[symbol]["price"]
                 profit_loss_percent = ((current_price - buy_price) / buy_price) * 100
                 
-                # Ha eléri vagy átlépi a stop-loss limitet (-1%)
                 if profit_loss_percent <= TradingConfig.STOP_LOSS_PCT:
-                    trade_log.append(f"[{time.strftime('%H:%M:%S')}] !!! STOP-LOSS !!! Eladva: {symbol} ({profit_loss_percent:.2f}%)")
+                    log_msg = f"[{time.strftime('%H:%M:%S')}] !!! STOP-LOSS !!! Eladva: {symbol} ({profit_loss_percent:.2f}%)"
+                    trade_log.append(log_msg)
+                    
+                    # ADATBÁZIS MŰVELETEK ELADÁSKOR: Törlés az aktívak közül, bejegyzés a történelembe
+                    database.delete_position(symbol)
+                    database.log_trade("STOP-LOSS", symbol, current_price, log_msg)
+                    
                     del my_positions[symbol]
         
         # --- 2. VÉTELI LOGIKA ---
         for symbol, coin_info in market_dict.items():
-            # Ha emelkedik a trigger szint felett (+2%) és még nincs benne pozíciónk
             if coin_info["change_24h"] >= TradingConfig.BUY_TRIGGER_PCT and symbol not in my_positions:
-                # És van még hely a maximális pozícióknak (max 3)
                 if len(my_positions) < TradingConfig.MAX_POSITIONS:
                     my_positions[symbol] = coin_info["price"]
-                    trade_log.append(f"[{time.strftime('%H:%M:%S')}] *** VÉTEL *** {symbol} megvéve: {coin_info['price']:.4f}")
+                    log_msg = f"[{time.strftime('%H:%M:%S')}] *** VÉTEL *** {symbol} megvéve: {coin_info['price']:.4f}"
+                    trade_log.append(log_msg)
+                    
+                    # ADATBÁZIS MŰVELETEK VÉTELKOR: Mentés az aktívak közé, bejegyzés a történelembe
+                    database.save_position(symbol, coin_info["price"])
+                    database.log_trade("VÉTEL", symbol, coin_info["price"], log_msg)
         
         # --- 3. MEGJELENÍTÉS ---
         render_dashboard(loop_count, current_market, my_positions, trade_log)
@@ -105,4 +130,4 @@ if __name__ == "__main__":
     try:
         start_bot()
     except KeyboardInterrupt:
-        print("\n\n[INFO] A tanuló robot sikeresen leállt. Folytatjuk a jegyzetelést!")
+        print("\n\n[INFO] A tanuló robot sikeresen leállt. Az adatok az adatbázisban biztonságban vannak!")
