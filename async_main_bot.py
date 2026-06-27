@@ -6,12 +6,14 @@ import os
 import websockets
 from config import TradingConfig
 import database
-import api_client  # ÚJ: Importáljuk az API klienst a parancsküldéshez
+import api_client
+import indicators  # ÚJ: Importáljuk a matematikai modult
 
 BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear"
 
 my_positions = {}
 market_state = {}  
+price_history = {}  # ÚJ: Itt gyűjtjük a coinok ártörténetét az RSI számításhoz (pl. {"BTCUSDT": [60100, 60105...]})
 loop_count = 0
 last_render_time = 0
 
@@ -23,26 +25,29 @@ def render_async_dashboard():
     clear_screen()
     
     print("=" * 70)
-    print(f" 🔥 ASZINKRON API-KAPCSOLT ROBOT | Frissítés #{loop_count}")
+    print(f" 📊 RSI-SZŰRT ASZINKRON ROBOT | Frissítés #{loop_count}")
     print(f" Idő: {time.strftime('%Y-%m-%d %H:%M:%S')} | Kilépés: Ctrl+C")
     print("=" * 70)
     
-    print(f"\n[1] ÉLŐ PIACI MONITOR (Figyelt coinok)")
+    print(f"\n[1] ÉLŐ PIACI MONITOR & INDIKÁTOROK")
+    print("-" * 70)
+    print(f"{'COIN':<10} | {'ÁR':<12} | {'24H VÁLTOZÁS':<12} | {'ÉLŐ RSI (14)'}")
     print("-" * 70)
     for symbol in TradingConfig.WATCH_LIST:
         if symbol in market_state:
             coin = market_state[symbol]
-            print(f"-> {symbol:<10} | Ár: {coin['price']:<10.4f} | 24h Változás: {coin['change']:+.2f}%")
+            rsi_val = coin['rsi'] if coin['rsi'] is not None else "Gyűjtés..."
+            print(f"{symbol:<10} | {coin['price']:<12.4f} | {coin['change']:+11.2f}% | {rsi_val}")
         else:
-            print(f"-> {symbol:<10} | [Kapcsolódás...]")
+            print(f"{symbol:<10} | [Kapcsolódás...]")
     
-    print(f"\n[2] AKTÍV POZÍCIÓK (Élő API és Adatbázis szinkron)")
+    print(f"\n[2] AKTÍV POZÍCIÓK")
     print("-" * 70)
     print(f"{'COIN':<12} | {'VÉTELI ÁR':<12} | {'PROFIT / LOSS'}")
     print("-" * 70)
     
     if not my_positions:
-        print("   Nincsenek aktív pozíciók. Élő belépőre várás...")
+        print("   Nincsenek aktív pozíciók. Stratégia figyelése...")
     else:
         for symbol, buy_price in my_positions.items():
             if symbol in market_state:
@@ -54,36 +59,47 @@ def render_async_dashboard():
     print("=" * 70)
 
 async def handle_market_update(symbol, price, change_24h):
-    """Eseményvezérelt logika valós API parancsküldéssel"""
     global loop_count, last_render_time
     loop_count += 1
     
-    market_state[symbol] = {"price": price, "change": change_24h}
+    # 1. Ártörténet frissítése az RSI-hez
+    if symbol not in price_history:
+        price_history[symbol] = []
     
-    # --- 1. VALÓDI/SZIMULÁLT ELADÁSI LOGIKA (STOP-LOSS) ---
+    price_history[symbol].append(price)
+    
+    # Nem kell végtelen sok árat tárolni, maximum 30 elég a memóriában
+    if len(price_history[symbol]) > 30:
+        price_history[symbol].pop(0)
+        
+    # 2. RSI kiszámítása az utolsó árakból
+    rsi = indicators.calculate_rsi(price_history[symbol], period=14)
+    
+    # Elmentjük az állapotot az új RSI értékkel együtt
+    market_state[symbol] = {"price": price, "change": change_24h, "rsi": rsi}
+    
+    # --- 3. ELADÁSI LOGIKA (STOP-LOSS) ---
     if symbol in my_positions:
         buy_price = my_positions[symbol]
         profit_loss_percent = ((price - buy_price) / buy_price) * 100
         
         if profit_loss_percent <= TradingConfig.STOP_LOSS_PCT:
-            # ÚJ: Parancsot küldünk a Bybitnek, hogy adjon el mindent (Sell) ebből a coinból
-            # Példaként fix 1-es mennyiséggel tesztelünk
             api_client.place_order(symbol, "Sell", qty=1)
-            
             database.delete_position(symbol)
-            database.log_trade("STOP-LOSS", symbol, price, f"API SL Eladás: {profit_loss_percent:.2f}%")
+            database.log_trade("STOP-LOSS", symbol, price, f"RSI Bot SL: {profit_loss_percent:.2f}%")
             del my_positions[symbol]
             
-    # --- 2. VALÓDI/SZIMULÁLT VÉTELI LOGIKA ---
+    # --- 4. OKOSABB VÉTELI LOGIKA (Árfolyam + RSI szűrő!) ---
     elif change_24h >= TradingConfig.BUY_TRIGGER_PCT:
-        if len(my_positions) < TradingConfig.MAX_POSITIONS:
-            # ÚJ: Parancsot küldünk a Bybitnek, hogy vegyen (Buy) ebből a coinból
-            api_client.place_order(symbol, "Buy", qty=1)
-            
-            my_positions[symbol] = price
-            database.save_position(symbol, price)
-            database.log_trade("VÉTEL", symbol, price, "API WebSocket Vétel")
+        # CSAK AKKOR VESZÜNK, ha az RSI már ki van számolva ÉS 70 alatt van (nincs túlvéve)
+        if rsi is not None and rsi < 70.0:
+            if len(my_positions) < TradingConfig.MAX_POSITIONS:
+                api_client.place_order(symbol, "Buy", qty=1)
+                my_positions[symbol] = price
+                database.save_position(symbol, price)
+                database.log_trade("VÉTEL", symbol, price, f"Okos Vétel | RSI: {rsi}")
 
+    # Megjelenítés limitálása
     current_time = time.time()
     if current_time - last_render_time >= 0.3:
         render_async_dashboard()
@@ -122,4 +138,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(start_async_bot())
     except KeyboardInterrupt:
-        print("\n[INFO] Az API-kapcsolt robot leállt.")
+        print("\n[INFO] Az RSI Robot leállt.")
