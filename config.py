@@ -5,19 +5,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class TradingConfig:
-    # Biztonsági kulcsok
     API_KEY = os.getenv("BYBIT_API_KEY", "")
     API_SECRET = os.getenv("BYBIT_API_SECRET", "")
     
-    # Bybit API specifikus fix beállítások
     API_URL = "https://api.bybit.com/v5/market/tickers"
     CATEGORY = "linear"
     
-    # Kereskedési stratégia beállításai
     MAX_POSITIONS = 3
     BUY_TRIGGER_PCT = 2.0  
-    STOP_LOSS_PCT = -1.0   
-    REFRESH_RATE_SECONDS = 5
     
-    # ÚJ: A robot által figyelt top coinok listája
+    # --- ÚJ KOCKÁZATKEZELÉSI BEÁLLÍTÁSOK ---
+    INITIAL_STOP_LOSS_PCT = -1.0  # Kezdő stop-loss (ha azonnal esni kezd)
+    TAKE_PROFIT_PCT = 2.0        # Fix profitcél (itt azonnal zárunk és zsebre tesszük a pénzt)
+    TRAILING_TRIGGER_PCT = 1.0   # Ha elérjük az 1% profitot, a Stop-Loss felugrik 0%-ra (Breakeven)!
+    
+    REFRESH_RATE_SECONDS = 5
     WATCH_LIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"]
