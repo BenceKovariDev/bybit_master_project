@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 try:
     from api_kliens import fetch_top_market_data
 except ImportError:
-    # Ha az api_kliens sem elérhető, egy alap függvényt adunk meg mock adattal
     def fetch_top_market_data():
         return [{"szimbólum": "XRPUSDT", "24 órás forgalom": "1500000", "utolsó ár": "0.55", "price24hPcnt": "2.5"}]
 
@@ -21,7 +20,6 @@ API_KEY = os.getenv("BYBIT_API_KEY", "").strip()
 API_SECRET = os.getenv("BYBIT_API_SECRET", "").strip()
 BASE_URL = "https://api-demo.bybit.com"
 
-# Beépített konfiguráció, hogy ne kelljen külső TradingConfig modul!
 LOOP_INTERVAL = 10  # Hány másodpercenként frissüljön a bot
 
 def folyamatpiaci_adatok(nyers_jegyek):
@@ -32,9 +30,9 @@ def folyamatpiaci_adatok(nyers_jegyek):
         if szimbólum.endswith("USDT") and szimbólum != "USDcusdt":
             érvényes_érmék.append({
                 "szimbólum": szimbólum,
-                "forgalom": float(ketyegő.get("24 órás forgalom", ketyegő.get("forgalom", 0))),
-                "ár": float(ketyegő.get("utolsó ár", ketyegő.get("ár", 0))),
-                "változás_24h": float(ketyegő.get("price24hPcnt", ketyegő.get("változás_24h", 0)))
+                "forgalom": float(ketyegő.get("24 órás forgalom", ketyegő.get("turnover24h", 0))),
+                "ár": float(ketyegő.get("utolsó ár", ketyegő.get("lastPrice", 0))),
+                "változás_24h": float(ketyegő.get("price24hPcnt", ketyegő.get("price24hPcnt", 0)))
             })
     érvényes_érmék.sort(key=lambda x: x["forgalom"], reverse=True)
     return érvényes_érmék[:50]
@@ -59,12 +57,12 @@ def biztonsagos_egyenleg_lekerdezes():
     timestamp = str(int(time.time() * 1000))
     recv_window = "5000"
     
+    # JAVÍTVA: Pontosan az az összefűzés, amit a Bybit logja kért!
     query_string = f"accountType=UNIFIED&api_key={API_KEY}&recv_window={recv_window}&timestamp={timestamp}"
-    sign_string = timestamp + API_KEY + recv_window + query_string
     
     signature = hmac.new(
         bytes(API_SECRET, "utf-8"),
-        bytes(sign_string, "utf-8"),
+        bytes(query_string, "utf-8"),
         hashlib.sha256
     ).hexdigest()
     
