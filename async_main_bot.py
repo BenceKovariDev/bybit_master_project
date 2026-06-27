@@ -9,29 +9,34 @@ import database
 
 BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear"
 
-# Globális változók a memóriában
 my_positions = {}
+market_state = {}  # Új: Itt tároljuk az összes figyelt coin legfrissebb árát
 loop_count = 0
 last_render_time = 0
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
-def render_async_dashboard(current_coin, current_price, current_change):
-    """Villámgyorsan kirajzolja az aktuális állapotot a terminálra"""
+def render_async_dashboard():
+    """Dinamikus, több coint kezelő felület"""
     global loop_count
     clear_screen()
     
     print("=" * 70)
-    print(f" 🔥 ASZINKRON WEBSOCKET ROBOT | Frissítés #{loop_count}")
+    print(f" 🔥 MULTI-STREAM WEBSOCKET ROBOT | Frissítés #{loop_count}")
     print(f" Idő: {time.strftime('%Y-%m-%d %H:%M:%S')} | Kilépés: Ctrl+C")
     print("=" * 70)
     
-    print(f"\n[1] ÉLŐ PIACI MONITOR")
+    print(f"\n[1] ÉLŐ PIACI MONITOR (Figyelt coinok)")
     print("-" * 70)
-    print(f"-> {current_coin:<10} | Aktuális Ár: {current_price:<10.4f} | 24h Változás: {current_change:+.2f}%")
+    for symbol in TradingConfig.WATCH_LIST:
+        if symbol in market_state:
+            coin = market_state[symbol]
+            print(f"-> {symbol:<10} | Ár: {coin['price']:<10.4f} | 24h Változás: {coin['change']:+.2f}%")
+        else:
+            print(f"-> {symbol:<10} | [Kapcsolódás...]")
     
-    print(f"\n[2] AKTÍV POZÍCIÓK (Adatbázisból menedzselve)")
+    print(f"\n[2] AKTÍV POZÍCIÓK (Élő adatbázis frissítéssel)")
     print("-" * 70)
     print(f"{'COIN':<12} | {'VÉTELI ÁR':<12} | {'PROFIT / LOSS'}")
     print("-" * 70)
@@ -40,52 +45,50 @@ def render_async_dashboard(current_coin, current_price, current_change):
         print("   Nincsenek aktív pozíciók. Élő belépőre várás...")
     else:
         for symbol, buy_price in my_positions.items():
-            # Mivel most csak BTC-t hallgatunk példaként
-            if symbol == current_coin:
-                pl = ((float(current_price) - buy_price) / buy_price) * 100
+            if symbol in market_state:
+                curr_price = market_state[symbol]['price']
+                pl = ((curr_price - buy_price) / buy_price) * 100
                 print(f"{symbol:<12} | {buy_price:<12.4f} | {pl:+.2f}%")
             else:
-                print(f"{symbol:<12} | {buy_price:<12.4f} | [Várakozás árfrissítésre...]")
+                print(f"{symbol:<12} | {buy_price:<12.4f} | [Árra vár...]")
     print("=" * 70)
 
 async def handle_market_update(symbol, price, change_24h):
-    """Itt fut le a kereskedési logika minden egyes beérkező árra, azonnal!"""
+    """Eseményvezérelt logika, ami minden coinra külön-külven lefut"""
     global loop_count, last_render_time
     loop_count += 1
     
-    # --- 1. ELADÁSI (STOP-LOSS) LOGIKA ---
+    # Elmentjük az aktuális piaci állapotot
+    market_state[symbol] = {"price": price, "change": change_24h}
+    
+    # --- 1. ELADÁSI LOGIKA ---
     if symbol in my_positions:
         buy_price = my_positions[symbol]
         profit_loss_percent = ((price - buy_price) / buy_price) * 100
         
         if profit_loss_percent <= TradingConfig.STOP_LOSS_PCT:
-            print(f"\n[!] !!! STOP-LOSS ELÉRVE !!! {symbol} eladva {price} áron ({profit_loss_percent:.2f}%)")
             database.delete_position(symbol)
-            database.log_trade("STOP-LOSS", symbol, price, f"Aszinkron SL eladás: {profit_loss_percent:.2f}%")
+            database.log_trade("STOP-LOSS", symbol, price, f"WebSocket Multi-SL: {profit_loss_percent:.2f}%")
             del my_positions[symbol]
             
     # --- 2. VÉTELI LOGIKA ---
     elif change_24h >= TradingConfig.BUY_TRIGGER_PCT:
         if len(my_positions) < TradingConfig.MAX_POSITIONS:
             my_positions[symbol] = price
-            print(f"\n[*] *** ASZINKRON VÉTEL *** {symbol} megvéve {price} áron!")
             database.save_position(symbol, price)
-            database.log_trade("VÉTEL", symbol, price, "Aszinkron WebSocket vétel")
+            database.log_trade("VÉTEL", symbol, price, "WebSocket Multi-Vétel")
 
-    # --- 3. MEGJELENÍTÉS LIMITÁLÁSA (hogy ne villogjon másodpercenként 10-szer a kijelző)
+    # Megjelenítés limitálása (0.3 másodpercenként max egyszer rajzolunk újra)
     current_time = time.time()
-    if current_time - last_render_time >= 0.5:
-        render_async_dashboard(symbol, price, change_24h)
+    if current_time - last_render_time >= 0.3:
+        render_async_dashboard()
         last_render_time = current_time
 
 async def start_async_bot():
-    """Elindítja az aszinkron kapcsolatot és az adatbázis-betöltést"""
     global my_positions
-    print("[INFO] Adatbázis inicializálása...")
     database.init_db()
     
-    print("[INFO] Korábbi pozíciók betöltése az adatbázisból...")
-    # Betöltjük a meglévő pozíciókat a memóriába
+    # Pozíciók betöltése
     conn = database.get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT symbol, buy_price FROM active_positions")
@@ -93,32 +96,33 @@ async def start_async_bot():
         my_positions[row["symbol"]] = row["buy_price"]
     conn.close()
 
-    print(f"[INFO] Csatlakozás a WebSocket-hez: {BYBIT_WS_URL}")
     async with websockets.connect(BYBIT_WS_URL) as ws:
-        # Feliratkozunk a BTCUSDT-re
+        # ÚJ: Dinamikusan generáljuk a feliratkozási listát a config alapján!
+        args_list = [f"tickers.{symbol}" for symbol in TradingConfig.WATCH_LIST]
+        
         subscribe_message = {
             "op": "subscribe",
-            "args": ["tickers.BTCUSDT"]
+            "args": args_list
         }
         await ws.send(json.dumps(subscribe_message))
-        print("[INFO] Feliratkozva a BTCUSDT élő adatfolyamra!")
         
         while True:
             response = await ws.recv()
             data = json.loads(response)
             
-            if "data" in data:
+            if "data" in data and "topic" in data:
+                # Pl. "tickers.BTCUSDT"-ből kiszedjük a "BTCUSDT"-t
+                symbol = data["topic"].split(".")[-1]
                 ticker_data = data["data"]
+                
                 if "lastPrice" in ticker_data and "price24hPcnt" in ticker_data:
                     current_price = float(ticker_data["lastPrice"])
-                    # A Bybit tizedes törtként adja meg a százalékot (pl. 0.02 = 2%), szorozzuk meg 100-zal
                     change_24h = float(ticker_data["price24hPcnt"]) * 100
                     
-                    # Átadjuk az adatot a logikának feldolgozásra
-                    await handle_market_update("BTCUSDT", current_price, change_24h)
+                    await handle_market_update(symbol, current_price, change_24h)
 
 if __name__ == "__main__":
     try:
         asyncio.run(start_async_bot())
     except KeyboardInterrupt:
-        print("\n[INFO] Az Aszinkron Robot biztonságosan leállt.")
+        print("\n[INFO] Multi-Stream Robot leállítva.")

@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class TradingConfig:
-    # Biztonsági kulcsok (a .env fájlból)
+    # Biztonsági kulcsok
     API_KEY = os.getenv("BYBIT_API_KEY", "")
     API_SECRET = os.getenv("BYBIT_API_SECRET", "")
     
@@ -15,6 +15,9 @@ class TradingConfig:
     
     # Kereskedési stratégia beállításai
     MAX_POSITIONS = 3
-    BUY_TRIGGER_PCT = 2.0  # +2% emelkedésnél veszünk
-    STOP_LOSS_PCT = -1.0   # -1% esésnél eladunk
+    BUY_TRIGGER_PCT = 2.0  
+    STOP_LOSS_PCT = -1.0   
     REFRESH_RATE_SECONDS = 5
+    
+    # ÚJ: A robot által figyelt top coinok listája
+    WATCH_LIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"]
