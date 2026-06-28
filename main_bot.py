@@ -30,6 +30,14 @@ LOOP_INTERVAL = 10  # Frissitesi idokoz masodpercben
 TRADE_USDT_BUDGET = 10.0  # Pontosan ennyi dollarral lep be egy pozicioba
 LEVERAGE = 10            # 10x-es tokeattetel a profit maximalizalasahoz
 
+def log_to_file(uzenet):
+    """Fajlba is elmenti a bot naplojat a kesobbi szerveres ellenorzeshez."""
+    idobelyeg = time.strftime('%Y-%m-%d %H:%M:%S')
+    sor = f"[{idobelyeg}] {uzenet}\n"
+    with open("bot_naplo.log", "a", encoding="utf-8") as f:
+        f.write(sor)
+    print(uzenet) # Kiirja a kepernyore is
+
 def folyamatpiaci_adatok(nyers_jegyek):
     """Feldolgozza es megszuri a Bybitrol kapott nyers adatokat."""
     ervenyes_ermek = []
@@ -53,7 +61,7 @@ def render_muszerfal(ciklusok_szamalasa, jelenlegi_piac):
     """A terminalos felulet kirajzolasa."""
     tiszta_kepernyo()
     print("=" * 70)
-    print(f"🤖 BYBIT MASTER BOT | LEPESROL LEPESRE TANANYAG ES ELES RENDSZER")
+    print(f"🤖 BYBIT MASTER BOT | IPARI SZERVER-KESZ VALTOZAT (24/7 READY)")
     print(f"🕒 Ido: {time.strftime('%Y-%m-%d %H:%M:%S')}\t| Ciklus: {ciklusok_szamalasa}")
     print("=" * 70)
     if jelenlegi_piac:
@@ -119,14 +127,18 @@ def place_order_v5(symbol, side, qty, category="linear", order_type="Market"):
 # --- FO PROGRAMCIKLUS ---
 if __name__ == "__main__":
     ciklus_szamlalo = 0
-    print("🚀 Kezdodik a fo bot inicializalasa...")
+    log_to_file("🚀 Kezdodik a fo bot inicializalasa...")
     
-    egyenleg_adat = biztonsagos_egyenleg_lekerdezes()
-    if egyenleg_adat.get("retCode") == 0:
-        print("✅ Bybit V5 API Kapcsolat sikeresen felepitve!")
-        adatbazis.log_mentes(0, "Bot sikeresen elindult, API kapcsolat OK.")
-    else:
-        print(f"⚠️ Figyelem, az egyenleg lekeres hibat jelzett: {egyenleg_adat.get('retMsg')}")
+    # API Csatlakozasi probalkozas vegtelen ciklusban szerver-biztosan
+    while True:
+        egyenleg_adat = biztonsagos_egyenleg_lekerdezes()
+        if egyenleg_adat.get("retCode") == 0:
+            log_to_file("✅ Bybit V5 API Kapcsolat sikeresen felepitve!")
+            adatbazis.log_mentes(0, "Bot sikeresen elindult, API kapcsolat OK.")
+            break
+        else:
+            log_to_file(f"⚠️ Hiba az API kapcsolodasnal: {egyenleg_adat.get('retMsg')}. Újraprobalas 15 mp mulva...")
+            time.sleep(15)
     
     time.sleep(2)
 
@@ -134,8 +146,14 @@ if __name__ == "__main__":
         try:
             ciklus_szamlalo += 1
             
-            nyers_adatok = fetch_top_market_data()
-            piac_aktiv = folyamatpiaci_adatok(nyers_adatok)
+            # Élő adatlekerés hibatűréssel
+            try:
+                nyers_adatok = fetch_top_market_data()
+                piac_aktiv = folyamatpiaci_adatok(nyers_adatok)
+            except Exception as halozati_hiba:
+                log_to_file(f"❌ Halozati hiba az adatlekeresnel: {halozati_hiba}. Alvas 30 mp-ig...")
+                time.sleep(30)
+                continue
             
             render_muszerfal(ciklus_szamlalo, piac_aktiv)
             
@@ -150,25 +168,24 @@ if __name__ == "__main__":
                 szimbolum = jelzes['szimbolum']
                 aktualis_ar = jelzes['ar']
                 
-                # DINAMIKUS MENNYISEG KISZAMITASA ($10 * 10x tokeattetel / aktualis ar)
+                # DINAMIKUS MENNYISEG KISZAMITASA
                 nyers_qty = (TRADE_USDT_BUDGET * LEVERAGE) / aktualis_ar
                 
-                # Kerekites a Bybitnek (Bitcoinnal sok tizedes kell, olcso ermeknel egesz szam)
                 if aktualis_ar > 1000:
-                    dinamikus_qty = round(nyers_qty, 3) # Pl. BTC-nel 0.002
+                    dinamikus_qty = round(nyers_qty, 3)
                 elif aktualis_ar > 10:
-                    dinamikus_qty = round(nyers_qty, 1) # Pl. LINK-nel 5.2
+                    dinamikus_qty = round(nyers_qty, 1)
                 else:
-                    dinamikus_qty = int(nyers_qty)      # Pl. XRP-nel 182 (egesz)
+                    dinamikus_qty = int(nyers_qty)
 
                 if dinamikus_qty > 0:
-                    print(f"🚀 Kereskedesi jel: {szimbolum} -> {dinamikus_qty} darab (Ertek: ${TRADE_USDT_BUDGET})")
+                    log_to_file(f"🚀 Kereskedesi jel: {szimbolum} -> {dinamikus_qty} darab (Ertek: ${TRADE_USDT_BUDGET})")
                     
                     valasz = place_order_v5(symbol=szimbolum, side=jelzes['irany'], qty=dinamikus_qty)
                     
                     if valasz.get("retCode") == 0:
                         order_id = valasz.get("result", {}).get("orderId", "UNKNOWN")
-                        print(f"✅ SIKERES RENDELÉS! OrderID: {order_id}")
+                        log_to_file(f"✅ SIKERES RENDELÉS! OrderID: {order_id}")
                         
                         adatbazis.pozicio_mentes(
                             order_id=order_id,
@@ -178,7 +195,7 @@ if __name__ == "__main__":
                             nyito_ar=aktualis_ar
                         )
                     else:
-                        print(f"❌ Bybit hiba: {valasz.get('retMsg')}")
+                        log_to_file(f"❌ Bybit hiba: {valasz.get('retMsg')}")
             
             if ciklus_szamlalo % 10 == 0:
                 adatbazis.log_mentes(ciklus_szamlalo, f"Bot fut, jelenlegi top erme: {piac_aktiv[0]['szimbolum']}")
@@ -186,8 +203,8 @@ if __name__ == "__main__":
             time.sleep(LOOP_INTERVAL)
             
         except KeyboardInterrupt:
-            print("\n🛑 A bot futasa felhasznalo altal leallitva.")
+            log_to_file("\n🛑 A bot futasa felhasznalo altal leallitva.")
             break
         except Exception as hiba:
-            print(f"❌ Hiba tortent a fociklusban: {hiba}")
-            time.sleep(5)
+            log_to_file(f"❌ Sulyos varatlan hiba a fociklusban: {hiba}. Ujrainditas 10 mp mulva...")
+            time.sleep(10)
