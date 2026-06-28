@@ -1,13 +1,14 @@
 # bybit_master_project/strategia.py
 import indikatorok
 
-# Egy szótár, amiben eltároljuk az érmék korábbi árait a memóriában
+# Egy szotar, amiben eltaroljuk az ermek korabbi arait a memoriaban
 AR_TORTENET = {}
 
 def elemzes_es_dontes(top_ermek_listaja):
     """
-    Kiterjesztett strategia: Momentum + RSI szures.
-    Csak akkor veszünk meg egy érmét, ha emelkedik, de az RSI alapján még NEM túlvetett!
+    Kiterjesztett Profi Strategia: Momentum + RSI Szures + SMA Trendkovetes.
+    Csak akkor vasarolunk, ha emelkedik, az RSI szerint nincs tulfujva,
+    ES a rovid tavu trend (SMA 5) a hosszu tavu trend (SMA 20) felett van!
     """
     global AR_TORTENET
     if not top_ermek_listaja:
@@ -18,34 +19,43 @@ def elemzes_es_dontes(top_ermek_listaja):
         ar = erme["ar"]
         valtozas = erme["valtozas_24h"]
         
-        # 1. ÁR-TÖRTÉNET GYŰJTÉSE
+        # 1. AR-TORTENET GYUJTESE
         if szimbolum not in AR_TORTENET:
             AR_TORTENET[szimbolum] = []
         
-        # Hozzáadjuk az aktuális árat a listához
         AR_TORTENET[szimbolum].append(ar)
         
-        # Maximum 30 árat tartunk meg a memóriában, hogy ne egye meg a telefont
-        if len(AR_TORTENET[szimbolum]) > 30:
+        # Maximum 35 arat tartunk meg a memoriaban az SMA 20-hoz
+        if len(AR_TORTENET[szimbolum]) > 35:
             AR_TORTENET[szimbolum].pop(0)
             
-        # 2. RSI KISZÁMÍTÁSA
-        # Kiszámoljuk az RSI-t. Ha még nincs elég adat (14 kör), 50-et kapunk vissza.
+        # Ha meg nincs eleg adatunk a teljes elemzeshez, megiszunk egy kavet
+        if len(AR_TORTENET[szimbolum]) < 20:
+            continue
+            
+        # 2. INDIKATOROK KISZAMITASA
         aktualis_rsi = indikatorok.kalkulal_rsi(AR_TORTENET[szimbolum])
+        sma_gyors = indikatorok.kalkulal_sma(AR_TORTENET[szimbolum], periodus=5)
+        sma_lassu = indikatorok.kalkulal_sma(AR_TORTENET[szimbolum], periodus=20)
         
-        # 3. FEJLETT STRATÉGIAI SZABÁLYOK
-        # - Momentum: 24 órás változás 3% és 12% között van
-        # - RSI szűrő: Az RSI 70 ALATT van (azaz NEM túlvetett az érme, van még benne tér felfelé!)
+        # 3. SZUPER-STRATEGIAI SZABALYRENDSZER
+        # - Momentum: 3% es 12% kozotti 24h emelkedes
         if 3.0 <= valtozas <= 12.0:
+            # - RSI ellenorzes: nem lehet 70 felett (nem tulfujt)
             if aktualis_rsi < 70.0:
-                print(f"🎯 Strategia talalat: {szimbolum} | Valtozas: {valtozas}% | RSI: {aktualis_rsi} -> VETEL!")
-                return {
-                    "szimbolum": szimbolum,
-                    "irany": "Buy",
-                    "ar": ar,
-                    "ok": f"Momentum ({valtozas}%) + Biztonsagos RSI ({aktualis_rsi})"
-                }
+                # - SMA Trend szuro: a gyors mozoatlag a lassu felett van (bika irany)
+                if sma_gyors > sma_lassu:
+                    print(f"🎯 SZUPER TALALAT: {szimbolum} | RSI: {aktualis_rsi} | SMA Trend: OK -> VETEL!")
+                    return {
+                        "szimbolum": szimbolum,
+                        "irany": "Buy",
+                        "ar": ar,
+                        "ok": f"RSI({aktualis_rsi}) + SMA Trend Kovetes"
+                    }
+                else:
+                    # Ha emelkedik is, de a mikro-trend mar lefele tart
+                    print(f"⏳ {szimbolum} emelkedik, de az SMA mikro-trend meg gyenge. Varakozas...")
             else:
-                print(f"⚠️ {szimbolum} emelkedik ({valtozas}%), de az RSI tul magas ({aktualis_rsi})! KISZŰRVE.")
+                print(f"⚠️ {szimbolum} emelkedik, de az RSI tul magas ({aktualis_rsi})! KISZURVE.")
                 
     return None
