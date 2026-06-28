@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 # Projekt specifikus modulok importalasa
 import adatbazis
 import strategia
+import kockazatkezeles
 
 try:
     from api_kliens import fetch_top_market_data
@@ -37,7 +38,7 @@ def folyamatpiaci_adatok(nyers_jegyek):
                 "ar": float(ketyego.get("utolsó ár", ketyego.get("lastPrice", 0))),
                 "valtozas_24h": float(ketyego.get("price24hPcnt", ketyego.get("price24hPcnt", 0)))
             })
-    ervenyes_ermek.sort(key=lambda x: x["forgalom"], reverse=True)
+    ervenyes_ermek.sort(key=lambda x: x["forganom" if "forganom" in x else "forgalom"], reverse=True)
     return ervenyes_ermek[:50]
 
 def tiszta_kepernyo():
@@ -129,28 +130,31 @@ if __name__ == "__main__":
         try:
             ciklus_szamlalo += 1
             
+            # 1. Friss piaci adatok lekerese
             nyers_adatok = fetch_top_market_data()
             piac_aktiv = folyamatpiaci_adatok(nyers_adatok)
             
+            # 2. Muszerfal frissitese
             render_muszerfal(ciklus_szamlalo, piac_aktiv)
             
-            # --- STRATEGIAI DONTES HOZATAL ---
+            # Egy gyors szotart (dict) epitunk a friss arakbol a kockazatkezelesnek
+            piaci_arak_dict = {erme["szimbolum"]: erme["ar"] for erme in piac_aktiv}
+            
+            # 3. KOCKAZATKEZELES: Meglevo nyitott poziciok ellenorzese es lezarasa (SL/TP)
+            kockazatkezeles.nyitott_poziciok_ellenorzese(piaci_arak_dict, place_order_v5)
+            
+            # 4. STRATEGIAI DONTES HOZATAL (Uj poziciok keresese)
             jelzes = strategia.elemzes_es_dontes(piac_aktiv)
             if jelzes:
                 print(f"🚀 Kereskedesi jel erkezett: {jelzes['szimbolum']} -> {jelzes['irany']} (Ar: {jelzes['ar']})")
-                
-                # FIX MENNYISEG TESZTELSHEZ (Pl. 10 darab XRP vagy Cardano, de BTC-nel ez tul sok lenne, 
-                # ezert biztonsagbol kicsi qty-t adunk meg, pl. 1)
                 teszt_qty = 1 
                 
-                # MEGBIZAS KULDÉSE A BYBITRE
                 valasz = place_order_v5(symbol=jelzes['szimbolum'], side=jelzes['irany'], qty=teszt_qty)
                 
                 if valasz.get("retCode") == 0:
                     order_id = valasz.get("result", {}).get("orderId", "UNKNOWN")
                     print(f"✅ SIKERES RENDELÉS! Bybit OrderID: {order_id}")
                     
-                    # MENTÉS AZ ADATBÁZISBA, HOGY A BOT EMLÉKEZZEN RÁ
                     adatbazis.pozicio_mentes(
                         order_id=order_id,
                         szimbólum=jelzes['szimbolum'],
@@ -161,8 +165,8 @@ if __name__ == "__main__":
                     adatbazis.log_mentes(ciklus_szamlalo, f"VETEL: {jelzes['szimbolum']} sikeresen vegrehajtva. ID: {order_id}")
                 else:
                     print(f"❌ Bybit elutasitotta a rendelest: {valasz.get('retMsg')}")
-                    adatbazis.log_mentes(ciklus_szamlalo, f"RENDELES HIBA: {jelzes['szimbolum']} - {valasz.get('retMsg')}")            
-            # Minden 10. ciklusban elmentunk egy sima futasi logot is
+                    adatbazis.log_mentes(ciklus_szamlalo, f"RENDELES HIBA: {jelzes['szimbolum']} - {valasz.get('retMsg')}")
+            
             if ciklus_szamlalo % 10 == 0:
                 adatbazis.log_mentes(ciklus_szamlalo, f"Bot fut, jelenlegi top erme: {piac_aktiv[0]['szimbolum']}")
             
