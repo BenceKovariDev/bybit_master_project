@@ -138,8 +138,30 @@ if __name__ == "__main__":
             jelzes = strategia.elemzes_es_dontes(piac_aktiv)
             if jelzes:
                 print(f"🚀 Kereskedesi jel erkezett: {jelzes['szimbolum']} -> {jelzes['irany']} (Ar: {jelzes['ar']})")
-                adatbazis.log_mentes(ciklus_szamlalo, f"JEL: {jelzes['szimbolum']} {jelzes['irany']} - Ok: {jelzes['ok']}")
-            
+                
+                # FIX MENNYISEG TESZTELSHEZ (Pl. 10 darab XRP vagy Cardano, de BTC-nel ez tul sok lenne, 
+                # ezert biztonsagbol kicsi qty-t adunk meg, pl. 1)
+                teszt_qty = 1 
+                
+                # MEGBIZAS KULDÉSE A BYBITRE
+                valasz = place_order_v5(symbol=jelzes['szimbolum'], side=jelzes['irany'], qty=teszt_qty)
+                
+                if valasz.get("retCode") == 0:
+                    order_id = valasz.get("result", {}).get("orderId", "UNKNOWN")
+                    print(f"✅ SIKERES RENDELÉS! Bybit OrderID: {order_id}")
+                    
+                    # MENTÉS AZ ADATBÁZISBA, HOGY A BOT EMLÉKEZZEN RÁ
+                    adatbazis.pozicio_mentes(
+                        order_id=order_id,
+                        szimbólum=jelzes['szimbolum'],
+                        irany=jelzes['irany'],
+                        mennyiseg=teszt_qty,
+                        nyito_ar=jelzes['ar']
+                    )
+                    adatbazis.log_mentes(ciklus_szamlalo, f"VETEL: {jelzes['szimbolum']} sikeresen vegrehajtva. ID: {order_id}")
+                else:
+                    print(f"❌ Bybit elutasitotta a rendelest: {valasz.get('retMsg')}")
+                    adatbazis.log_mentes(ciklus_szamlalo, f"RENDELES HIBA: {jelzes['szimbolum']} - {valasz.get('retMsg')}")            
             # Minden 10. ciklusban elmentunk egy sima futasi logot is
             if ciklus_szamlalo % 10 == 0:
                 adatbazis.log_mentes(ciklus_szamlalo, f"Bot fut, jelenlegi top erme: {piac_aktiv[0]['szimbolum']}")
