@@ -1,0 +1,50 @@
+--- PARANCS: Buy 10 XRPUSDT ---
+Idő: 2026-06-27 14:27:21
+Válasz: {
+  "retCode": 10001,
+  "retMsg": "Request parameter error: apiKey is missing",
+  "result": {},
+  "retExtInfo": {},
+  "time": 1782570442028
+}
+==================================================
+--- PARANCS: Buy 10 XRPUSDT ---
+Idő: 2026-06-27 14:39:19
+Válasz: {
+  "retCode": 10001,
+  "retMsg": "Request parameter error: apiKey is missing",
+  "result": {},
+  "retExtInfo": {},
+  "time": 1782571159322
+}
+==================================================
+--- PARANCS: Buy 10 XRPUSDT ---
+Idő: 2026-06-27 14:41:43
+Válasz: {
+  "retCode": 10001,
+  "retMsg": "Request parameter error: apiKey is missing",
+  "result": {},
+  "retExtInfo": {},
+  "time": 1782571303977
+}
+==================================================
+--- PARANCS: Buy 10 XRPUSDT ---
+Idő: 2026-06-27 14:44:54
+Válasz: {
+  "retCode": 10001,
+  "retMsg": "Request parameter error: apiKey is missing",
+  "result": {},
+  "retExtInfo": {},
+  "time": 1782571494702
+}
+==================================================
+--- PARANCS: Buy 10 XRPUSDT ---
+Idő: 2026-06-27 14:50:31
+Válasz: {
+  "retCode": 10001,
+  "retMsg": "Request parameter error: apiKey is missing",
+  "result": {},
+  "retExtInfo": {},
+  "time": 1782571831422
+}
+==================================================

@@ -7,10 +7,11 @@ import json
 from config import TradingConfig
 
 def fetch_top_market_data():
-    """Publikus adatok lekérése (ez változatlan marad)"""
+    """Publikus adatok lekérése a monitorozáshoz"""
     params = {"category": TradingConfig.CATEGORY}
     try:
-        response = requests.get(TradingConfig.API_URL, params=params, timeout=10)
+        market_url = "https://api.bybit.com/v5/market/tickers"
+        response = requests.get(market_url, params=params, timeout=10)
         if response.status_code == 200:
             return response.json().get("result", {}).get("list", [])
     except Exception:
@@ -18,7 +19,7 @@ def fetch_top_market_data():
     return []
 
 def generate_signature(timestamp, api_key, api_secret, recv_window, payload_str):
-    """Létrehozza a Bybit által elvárt HMAC-SHA256 biztonsági aláírást"""
+    """Létrehozza a Bybit által megkövetelt HMAC-SHA256 biztonsági aláírást"""
     param_str = timestamp + api_key + recv_window + payload_str
     return hmac.new(
         bytes(api_secret, "utf-8"),
@@ -28,22 +29,20 @@ def generate_signature(timestamp, api_key, api_secret, recv_window, payload_str)
 
 def place_order(symbol, side, qty):
     """
-    Valódi Market (Piaci áras) megbízást küld a Bybit tőzsdére.
-    side: 'Buy' vagy 'Sell'
-    qty: A megvásárolni/eladni kívánt mennyiség (pl. 0.01 BTC vagy 10 XRP)
+    Valódi Market megbízást küld a Bybit tőzsdére megtisztított kulcsokkal.
     """
-    # Ha nincsenek megadva kulcsok, csak teszt módban szimuláljuk
-    if not TradingConfig.API_KEY or not TradingConfig.API_SECRET:
+    # Kényszerített tisztítás (.strip()), hogy a láthatatlan karakterek ne rontsák el!
+    api_key = str(TradingConfig.API_KEY).strip().replace('"', '').replace("'", "")
+    api_secret = str(TradingConfig.API_SECRET).strip().replace('"', '').replace("'", "")
+
+    if not api_key or not api_secret:
         print(f"[SZIMULÁCIÓ] {side} parancs elküldve: {qty} {symbol}")
         return {"retCode": 0, "result": {"orderId": "mock_order_12345"}}
 
-    # A Bybit V5 éles privát végpontja
-    url = "https://api.bybit.com/v5/order/create"
-    
+    url = TradingConfig.API_URL
     timestamp = str(int(time.time() * 1000))
     recv_window = "5000"
     
-    # A parancs adatai JSON formátumban
     payload = {
         "category": TradingConfig.CATEGORY,
         "symbol": symbol,
@@ -52,29 +51,36 @@ def place_order(symbol, side, qty):
         "qty": str(qty),
         "timeInForce": "GTC"
     }
-    payload_str = json.dumps(payload)
+    
+    payload_str = json.dumps(payload, separators=(',', ':'))
 
-    # Generáljuk az egyedi aláírást ehhez a kéréshez
     signature = generate_signature(
         timestamp, 
-        TradingConfig.API_KEY, 
-        TradingConfig.API_SECRET, 
+        api_key, 
+        api_secret, 
         recv_window, 
         payload_str
     )
 
-    # A Bybit által megkövetelt speciális HTTP fejlécek
     headers = {
-        "X-BMT-APIKEY": TradingConfig.API_KEY,
-        "X-BMT-SIGN": signature,
-        "X-BMT-TIMESTAMP": timestamp,
-        "X-BMT-RECV-WINDOW": recv_window,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-Bybit-API-Key": api_key,
+        "X-Bybit-Sign": signature,
+        "X-Bybit-Timestamp": timestamp,
+        "X-Bybit-Recv-Window": recv_window
     }
 
     try:
         response = requests.post(url, headers=headers, data=payload_str, timeout=10)
-        return response.json()
+        response_json = response.json()
+        
+        with open("bybit_api.log", "a", encoding="utf-8") as log_file:
+            log_file.write(f"--- PARANCS: {side} {qty} {symbol} ---\n")
+            log_file.write(f"Idő: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            log_file.write(f"Válasz: {json.dumps(response_json, indent=2)}\n")
+            log_file.write("="*50 + "\n")
+            
+        return response_json
     except Exception as e:
-        print(f"[HIBA] Nem sikerült elküldeni a parancsot: {e}")
+        print(f"[HIBA] API hiba történt: {e}")
         return None
